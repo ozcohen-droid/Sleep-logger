@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sleep Logger v1.5</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; background: #0d1117; color: #e6edf3; padding: 16px; min-height: 100vh; }
+  h1 { font-size: 20px; margin-bottom: 4px; color: #58a6ff; text-align: center; }
+  .clock { text-align: center; font-size: 20px; color: #8b949e; margin-bottom: 12px; }
+
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+  .card-title { font-size: 12px; color: #8b949e; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  .status { display: flex; align-items: center; gap: 10px; font-size: 15px; margin-bottom: 12px; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; background: #f85149; flex-shrink: 0; }
+  .dot.connected  { background: #3fb950; }
+  .dot.connecting { background: #d29922; animation: blink 1s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  button { width: 100%; padding: 13px; border: none; border-radius: 8px; font-size: 15px; font-weight: bold; cursor: pointer; margin-bottom: 8px; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-connect    { background: #238636; color: white; }
+  .btn-disconnect { background: #f85149; color: white; }
+  .btn-save       { background: #1f6feb; color: white; }
+  .btn-clear      { background: #30363d; color: #e6edf3; }
+  .btn-mic-start  { background: #6e40c9; color: white; }
+  .btn-mic-stop   { background: #8b949e; color: white; }
+
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+  .stat { background: #0d1117; border-radius: 8px; padding: 10px; text-align: center; }
+  .stat-value { font-size: 26px; font-weight: bold; color: #58a6ff; }
+  .stat-label { font-size: 11px; color: #8b949e; margin-top: 3px; }
+
+  /* גרף ציר זמן */
+  .chart-wrap { position: relative; margin-bottom: 6px; }
+  #timelineCanvas { width: 100%; height: 60px; border-radius: 6px; display: block; }
+  .legend { display: flex; gap: 14px; font-size: 11px; color: #8b949e; margin-top: 6px; }
+  .legend span { display: flex; align-items: center; gap: 5px; }
+  .leg-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+
+  /* כרטיס נשימת פה */
+  .mouth-card { background: #1a0f0f; border: 1px solid #30363d; border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+  .mouth-card.has-events { border-color: #f85149; }
+  .mouth-card.active-now { animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{border-color:#f85149} 50%{border-color:#ff6060} }
+  .mouth-title { color: #f85149; font-size: 13px; font-weight: bold; margin-bottom: 8px; }
+  .mouth-list { font-size: 12px; font-family: monospace; color: #e6a07a; max-height: 120px; overflow-y: auto; }
+  .mouth-row { padding: 3px 0; border-bottom: 1px solid #2a1515; }
+  .mouth-current { color: #ff8080; }
+
+  /* כרטיס נחירות */
+  .snore-card { background: #0f1a0f; border: 1px solid #30363d; border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+  .snore-card.has-snore { border-color: #d29922; }
+  .snore-title { color: #d29922; font-size: 13px; font-weight: bold; margin-bottom: 8px; }
+  .snore-bar-wrap { background: #0d1117; border-radius: 4px; height: 8px; margin-bottom: 8px; overflow: hidden; }
+  .snore-bar { height: 100%; background: #d29922; width: 0%; transition: width 0.2s; border-radius: 4px; }
+  .snore-list { font-size: 12px; font-family: monospace; color: #c9a227; max-height: 80px; overflow-y: auto; }
+  .snore-row { padding: 2px 0; border-bottom: 1px solid #1a2a0a; }
+
+  .log-area { background: #0d1117; border-radius: 8px; padding: 10px; height: 160px; overflow-y: auto; font-family: monospace; font-size: 11px; }
+  .log-exhale { color: #3fb950; }
+  .log-inhale { color: #58a6ff; }
+  .log-mouth  { color: #f85149; font-style: italic; }
+  .log-snore  { color: #d29922; font-style: italic; }
+
+  .warning { background: #272115; border: 1px solid #d29922; border-radius: 8px; padding: 10px; font-size: 12px; color: #d29922; margin-bottom: 14px; }
+
+  .sens-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #8b949e; margin-top: 8px; }
+  .sens-row input { flex: 1; }
+</style>
+</head>
+<body>
+
+<h1>🌙 Sleep Logger v1.5</h1>
+<div class="clock" id="clockDisplay">--:--:--</div>
+
+<!-- חיבור -->
+<div class="card">
+  <div class="status"><div class="dot" id="dot"></div><span id="statusText">לא מחובר</span></div>
+  <button class="btn-connect"    id="btnConnect"    onclick="connect()">התחבר למכשיר</button>
+  <button class="btn-disconnect" id="btnDisconnect" onclick="disconnect()" style="display:none">נתק</button>
+  <button id="btnToggle" onclick="toggleDevice()" style="display:none; width:100%; padding:13px; border:none; border-radius:8px; font-size:15px; font-weight:bold; cursor:pointer; margin-bottom:8px; background:#f85149; color:white;">⏹ עצור מכשיר</button>
+</div>
+
+<!-- סטטיסטיקות -->
+<div class="stats">
+  <div class="stat"><div class="stat-value" id="statBreaths">0</div><div class="stat-label">נשימות אף</div></div>
+  <div class="stat"><div class="stat-value" id="statBPM">—</div><div class="stat-label">נשימות/דקה (אף)</div></div>
+  <div class="stat"><div class="stat-value" id="statDuration">0</div><div class="stat-label">דקות כולל</div></div>
+  <div class="stat"><div class="stat-value" id="statNoseMin">0</div><div class="stat-label">דקות נשימת אף</div></div>
+</div>
+
+<!-- גרף ציר זמן -->
+<div class="card">
+  <div class="card-title">ציר זמן — נשימה</div>
+  <div class="chart-wrap">
+    <canvas id="timelineCanvas" height="60"></canvas>
+  </div>
+  <div class="legend">
+    <span><div class="leg-dot" style="background:#58a6ff"></div>נשימת אף</span>
+    <span><div class="leg-dot" style="background:#f85149"></div>נשימת פה</span>
+    <span><div class="leg-dot" style="background:#d29922"></div>נחירות</span>
+  </div>
+</div>
+
+<!-- נשימת פה -->
+<div class="mouth-card" id="mouthCard">
+  <div class="mouth-title">👄 נשימת פה — <span id="mouthCount">0</span> אירועים | <span id="mouthTotalSec">0:00</span> סה"כ</div>
+  <div class="mouth-list" id="mouthList"><span style="color:#8b949e">לא זוהתה נשימת פה</span></div>
+</div>
+
+<!-- נחירות -->
+<div class="snore-card" id="snoreCard">
+  <div class="snore-title">😤 נחירות — <span id="snoreCount">0</span> אירועים | <span id="snoreTotalSec">0:00</span> סה"כ</div>
+  <div class="snore-bar-wrap"><div class="snore-bar" id="snoreBar"></div></div>
+  <button class="btn-mic-start" id="btnMic" onclick="toggleMic()">🎙️ הפעל זיהוי נחירות</button>
+  <div class="sens-row">
+    <span>רגישות:</span>
+    <input type="range" id="snoreSens" min="1" max="10" value="5">
+    <span id="sensVal">5</span>
+  </div>
+  <div class="snore-list" id="snoreList"><span style="color:#8b949e">לא זוהו נחירות</span></div>
+</div>
+
+<div class="warning" id="wakeWarning" style="display:none">⚠️ מסך כבוי עלול לנתק BLE — השאר את המסך דלוק</div>
+
+<!-- לוג -->
+<div class="card">
+  <div class="card-title">לוג אירועים</div>
+  <div class="log-area" id="logArea"></div>
+</div>
+
+<button class="btn-save"  id="btnSave"  onclick="saveCSV()" disabled>💾 שמור CSV</button>
+<button class="btn-clear" onclick="clearLog()">🗑️ נקה לוג</button>
+
+<script>
+// =============================================================
+// קבועים
+// =============================================================
+const SERVICE_UUID     = "12345678-1234-1234-1234-123456789abc";
+const CHAR_UUID        = "12345678-1234-1234-1234-123456789abd";
+const CONTROL_UUID     = "12345678-1234-1234-1234-123456789abe";
+const MOUTH_TIMEOUT_MS = 10000;
+
+// =============================================================
+// מצב גלובלי
+// =============================================================
+let device, characteristic, controlChar, wakeLock, mouthCheckTimer;
+let logRows = [], totalExhales = 0, totalInhales = 0;
+let startTime = null, lastEventTime = null;
+let mouthEvents = [], mouthStart = null, mouthStartClock = null, totalMouthMs = 0;
+let deviceActive = true;
+
+// נחירות
+let micStream = null, audioCtx = null, analyser = null, micActive = false;
+let snoreEvents = [], snoreStart = null, snoreStartClock = null;
+let snoreCheckTimer = null;
+let lastSnoreLevel = 0;
+
+// גרף
+const canvas = document.getElementById("timelineCanvas");
+const ctx2d  = canvas.getContext("2d");
+let chartTimer = null;
+
+// =============================================================
+// עזר
+// =============================================================
+function secToMMSS(sec) {
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return `${m}:${String(s).padStart(2,'0')}`;
+}
+function nowTimeStr() {
+  const n = new Date();
+  return `${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}:${String(n.getSeconds()).padStart(2,'0')}`;
+}
+
+// שעון חי
+setInterval(() => document.getElementById("clockDisplay").textContent = nowTimeStr(), 1000);
+
+// סליידר רגישות
+document.getElementById("snoreSens").addEventListener("input", e => {
+  document.getElementById("sensVal").textContent = e.target.value;
+});
+
+// =============================================================
+// BLE — חיבור
+// =============================================================
+async function requestWakeLock() {
+  try { wakeLock = await navigator.wakeLock.request("screen"); document.getElementById("wakeWarning").style.display="none"; }
+  catch { document.getElementById("wakeWarning").style.display="block"; }
+}
+
+async function connect() {
+  try {
+    setStatus("connecting","מתחבר...");
+    device = await navigator.bluetooth.requestDevice({ filters:[{name:"BreathDevice"}], optionalServices:[SERVICE_UUID] });
+    device.addEventListener("gattserverdisconnected", onDisconnected);
+    const server  = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE_UUID);
+    characteristic = await service.getCharacteristic(CHAR_UUID);
+    await characteristic.startNotifications();
+    characteristic.addEventListener("characteristicvaluechanged", onData);
+    try { controlChar = await service.getCharacteristic(CONTROL_UUID); } catch { controlChar = null; }
+    setStatus("connected","מחובר — "+device.name);
+    document.getElementById("btnConnect").style.display="none";
+    document.getElementById("btnDisconnect").style.display="block";
+    if (controlChar) document.getElementById("btnToggle").style.display="block";
+    document.getElementById("btnSave").disabled = false;
+    deviceActive = true; updateToggleButton();
+    await requestWakeLock();
+    mouthCheckTimer = setInterval(checkMouth, 1000);
+    chartTimer      = setInterval(drawChart,  2000);
+  } catch(e) { setStatus("disconnected","שגיאה: "+e.message); }
+}
+
+async function sendControl(cmd) {
+  if (!controlChar) return;
+  try { await controlChar.writeValue(new TextEncoder().encode(cmd)); } catch(e) {}
+}
+async function toggleDevice() {
+  deviceActive = !deviceActive;
+  await sendControl(deviceActive ? "START" : "STOP");
+  updateToggleButton();
+}
+function updateToggleButton() {
+  const btn = document.getElementById("btnToggle");
+  btn.textContent = deviceActive ? "⏹ עצור מכשיר" : "▶️ הפעל מכשיר";
+  btn.style.background = deviceActive ? "#f85149" : "#238636";
+}
+function disconnect() { if(device&&device.gatt.connected) device.gatt.disconnect(); }
+function onDisconnected() {
+  setStatus("disconnected","נותק");
+  document.getElementById("btnConnect").style.display="block";
+  document.getElementById("btnDisconnect").style.display="none";
+  document.getElementById("btnToggle").style.display="none";
+  if(wakeLock){wakeLock.release();wakeLock=null;}
+  if(mouthCheckTimer){clearInterval(mouthCheckTimer);mouthCheckTimer=null;}
+  if(chartTimer){clearInterval(chartTimer);chartTimer=null;}
+  controlChar = null;
+}
+
+// =============================================================
+// נשימת פה
+// =============================================================
+function checkMouth() {
+  if (!lastEventTime || !startTime) return;
+  const silence = Date.now() - lastEventTime;
+  if (silence >= MOUTH_TIMEOUT_MS) {
+    if (!mouthStart) {
+      mouthStart = lastEventTime;
+      mouthStartClock = nowTimeStr();
+      addLog("","","MOUTH_START");
+    }
+    const cur = Math.round((Date.now()-mouthStart)/1000);
+    document.getElementById("mouthCard").className = "mouth-card has-events active-now";
+    renderMouthList(cur);
+  } else {
+    if (mouthStart) {
+      const dur = Math.round((Date.now()-mouthStart)/1000);
+      const sec = Math.round((mouthStart-startTime)/1000);
+      mouthEvents.push({start_sec:sec, duration_sec:dur, clock:mouthStartClock});
+      totalMouthMs += dur*1000;
+      addLog("",dur,"MOUTH_END");
+      mouthStart = null; mouthStartClock = null;
+      document.getElementById("mouthCard").className = "mouth-card has-events";
+      renderMouthList(null);
+    }
+  }
+  updateStats();
+}
+
+function renderMouthList(currentDur) {
+  const totalSec = mouthEvents.reduce((s,e)=>s+e.duration_sec,0)+(currentDur||0);
+  document.getElementById("mouthCount").textContent    = mouthEvents.length+(mouthStart?1:0);
+  document.getElementById("mouthTotalSec").textContent = secToMMSS(totalSec);
+  const list = document.getElementById("mouthList");
+  list.innerHTML = "";
+  mouthEvents.forEach((e,i) => {
+    const d = document.createElement("div");
+    d.className = "mouth-row";
+    d.textContent = `אירוע ${i+1}:  ${e.clock}  |  משך ${secToMMSS(e.duration_sec)}`;
+    list.appendChild(d);
+  });
+  if (mouthStart && currentDur !== null) {
+    const d = document.createElement("div");
+    d.className = "mouth-row mouth-current";
+    d.textContent = `אירוע ${mouthEvents.length+1}:  ${mouthStartClock}  |  כרגע... ${secToMMSS(currentDur)}`;
+    list.appendChild(d);
+  }
+}
+
+// =============================================================
+// נחירות — מיקרופון
+// =============================================================
+async function toggleMic() {
+  if (micActive) {
+    stopMic();
+  } else {
+    await startMic();
+  }
+}
+
+async function startMic() {
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    audioCtx  = new AudioContext();
+    analyser  = audioCtx.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.8;
+    const src = audioCtx.createMediaStreamSource(micStream);
+    src.connect(analyser);
+    micActive = true;
+    document.getElementById("btnMic").textContent  = "🔴 עצור זיהוי נחירות";
+    document.getElementById("btnMic").className    = "btn-mic-stop";
+    snoreCheckTimer = setInterval(checkSnore, 500);
+  } catch(e) {
+    alert("לא ניתן לגשת למיקרופון: " + e.message);
+  }
+}
+
+function stopMic() {
+  micActive = false;
+  if (snoreCheckTimer){ clearInterval(snoreCheckTimer); snoreCheckTimer=null; }
+  if (micStream) { micStream.getTracks().forEach(t=>t.stop()); micStream=null; }
+  if (audioCtx)  { audioCtx.close(); audioCtx=null; }
+  analyser = null;
+  document.getElementById("btnMic").textContent = "🎙️ הפעל זיהוי נחירות";
+  document.getElementById("btnMic").className   = "btn-mic-start";
+  document.getElementById("snoreBar").style.width = "0%";
+  // סגור אירוע פתוח
+  if (snoreStart) {
+    const dur = Math.round((Date.now()-snoreStart)/1000);
+    const sec = startTime ? Math.round((snoreStart-startTime)/1000) : 0;
+    snoreEvents.push({start_sec:sec, duration_sec:dur, clock:snoreStartClock});
+    snoreStart=null; snoreStartClock=null;
+    renderSnoreList();
+  }
+}
+
+function checkSnore() {
+  if (!analyser) return;
+  const buf = new Uint8Array(analyser.fftSize);
+  analyser.getByteTimeDomainData(buf);
+
+  // חישוב RMS (עוצמה)
+  let sum = 0;
+  for (let i=0; i<buf.length; i++) {
+    const v = (buf[i]-128)/128;
+    sum += v*v;
+  }
+  const rms = Math.sqrt(sum/buf.length);
+
+  // בדיקת תדרי נחירות (100-500Hz) בspectrum
+  const freqBuf = new Uint8Array(analyser.frequencyBinCount);
+  analyser.getByteFrequencyData(freqBuf);
+  const sampleRate = audioCtx.sampleRate;
+  const binHz = sampleRate / analyser.fftSize;
+  const lo = Math.floor(80  / binHz);
+  const hi = Math.floor(500 / binHz);
+  let freqPower = 0;
+  for (let i=lo; i<=hi && i<freqBuf.length; i++) freqPower += freqBuf[i];
+  freqPower /= (hi-lo+1);
+
+  // רמת נחירה מורכבת: שילוב עוצמה + תדר
+  const snoreLevel = rms * (freqPower / 128);
+  lastSnoreLevel = snoreLevel;
+
+  // סף מבוסס רגישות (1-10 → 0.05–0.005)
+  const sens = parseInt(document.getElementById("snoreSens").value);
+  const threshold = 0.055 - (sens-1)*0.005;
+
+  // עדכון בר ויזואלי
+  const barPct = Math.min(100, snoreLevel / threshold * 60);
+  document.getElementById("snoreBar").style.width = barPct + "%";
+
+  const isSnoring = snoreLevel > threshold;
+
+  if (isSnoring) {
+    if (!snoreStart) {
+      snoreStart = Date.now();
+      snoreStartClock = nowTimeStr();
+      addLog("","","SNORE_START");
+      document.getElementById("snoreCard").className = "snore-card has-snore";
+    }
+    renderSnoreList(Math.round((Date.now()-snoreStart)/1000));
+  } else {
+    if (snoreStart) {
+      const dur = Math.round((Date.now()-snoreStart)/1000);
+      if (dur >= 3) { // מינימום 3 שניות כדי לא לרשום רעשים קצרים
+        const sec = startTime ? Math.round((snoreStart-startTime)/1000) : 0;
+        snoreEvents.push({start_sec:sec, duration_sec:dur, clock:snoreStartClock});
+        addLog("",dur,"SNORE_END");
+      }
+      snoreStart=null; snoreStartClock=null;
+      renderSnoreList(null);
+    }
+  }
+}
+
+function renderSnoreList(currentDur) {
+  const totalSec = snoreEvents.reduce((s,e)=>s+e.duration_sec,0)+(currentDur||0);
+  document.getElementById("snoreCount").textContent    = snoreEvents.length+(snoreStart?1:0);
+  document.getElementById("snoreTotalSec").textContent = secToMMSS(totalSec);
+  const list = document.getElementById("snoreList");
+  list.innerHTML = "";
+  if (snoreEvents.length===0 && !snoreStart) {
+    list.innerHTML = '<span style="color:#8b949e">לא זוהו נחירות</span>';
+    return;
+  }
+  snoreEvents.forEach((e,i)=>{
+    const d = document.createElement("div");
+    d.className = "snore-row";
+    d.textContent = `נחירה ${i+1}:  ${e.clock}  |  משך ${secToMMSS(e.duration_sec)}`;
+    list.appendChild(d);
+  });
+  if (snoreStart && currentDur!==null) {
+    const d = document.createElement("div");
+    d.className = "snore-row";
+    d.style.color = "#f0c040";
+    d.textContent = `נחירה ${snoreEvents.length+1}:  ${snoreStartClock}  |  כרגע... ${secToMMSS(currentDur)}`;
+    list.appendChild(d);
+  }
+}
+
+// =============================================================
+// גרף ציר זמן
+// =============================================================
+function drawChart() {
+  if (!startTime) return;
+  const W = canvas.offsetWidth;
+  const H = 60;
+  canvas.width  = W;
+  canvas.height = H;
+
+  const totalSec = (Date.now()-startTime)/1000;
+  if (totalSec < 1) return;
+
+  function secToX(s) { return Math.round((s/totalSec)*W); }
+
+  // רקע
+  ctx2d.fillStyle = "#0d1117";
+  ctx2d.fillRect(0,0,W,H);
+
+  // ציר נשימה (חצי תחתון y=20..50)
+  const BAR_Y=20, BAR_H=22;
+
+  // כל הזמן = אף (כחול) — בסיס
+  ctx2d.fillStyle = "#1f3a5f";
+  ctx2d.fillRect(0, BAR_Y, W, BAR_H);
+
+  // ציין נשימות אף פעילות
+  ctx2d.fillStyle = "#58a6ff";
+  ctx2d.fillRect(0, BAR_Y, W, BAR_H);
+
+  // נשימות פה (אדום) — מעל
+  mouthEvents.forEach(e => {
+    const x1 = secToX(e.start_sec);
+    const x2 = secToX(e.start_sec + e.duration_sec);
+    ctx2d.fillStyle = "#f85149";
+    ctx2d.fillRect(x1, BAR_Y, Math.max(2,x2-x1), BAR_H);
+  });
+  // נשימת פה נוכחית
+  if (mouthStart) {
+    const sec = (mouthStart-startTime)/1000;
+    const dur = (Date.now()-mouthStart)/1000;
+    const x1 = secToX(sec);
+    const x2 = secToX(sec+dur);
+    ctx2d.fillStyle = "#ff6060";
+    ctx2d.fillRect(x1, BAR_Y, Math.max(2,x2-x1), BAR_H);
+  }
+
+  // נחירות (צהוב) — פס דק מעל
+  const SNORE_Y=14, SNORE_H=5;
+  snoreEvents.forEach(e => {
+    const x1 = secToX(e.start_sec);
+    const x2 = secToX(e.start_sec+e.duration_sec);
+    ctx2d.fillStyle = "#d29922";
+    ctx2d.fillRect(x1, SNORE_Y, Math.max(2,x2-x1), SNORE_H);
+  });
+  if (snoreStart) {
+    const sec = (snoreStart-startTime)/1000;
+    const dur = (Date.now()-snoreStart)/1000;
+    ctx2d.fillStyle = "#f0c040";
+    ctx2d.fillRect(secToX(sec), SNORE_Y, Math.max(2,secToX(sec+dur)-secToX(sec)), SNORE_H);
+  }
+
+  // קו "עכשיו"
+  ctx2d.strokeStyle = "#ffffff44";
+  ctx2d.lineWidth   = 1;
+  ctx2d.beginPath();
+  ctx2d.moveTo(W-1, 0);
+  ctx2d.lineTo(W-1, H);
+  ctx2d.stroke();
+
+  // תוויות זמן
+  ctx2d.fillStyle   = "#8b949e";
+  ctx2d.font        = "10px Arial";
+  ctx2d.textAlign   = "left";
+  ctx2d.fillText("0", 2, H-2);
+  ctx2d.textAlign   = "right";
+  ctx2d.fillText(secToMMSS(Math.floor(totalSec)), W-2, H-2);
+}
+
+// =============================================================
+// נתון מהארדואינו
+// =============================================================
+function onData(event) {
+  const val = new TextDecoder().decode(event.target.value);
+  if (val==="ready") return;
+  if (val.startsWith("status,")) {
+    const s=val.split(",")[1];
+    if(s==="stopped"){deviceActive=false;updateToggleButton();}
+    if(s==="started"){deviceActive=true; updateToggleButton();}
+    return;
+  }
+  const parts=val.split(",");
+  if(parts.length!==4) return;
+  const [time_sec,duration_sec,direction,nose_active]=parts;
+  logRows.push({time_sec,duration_sec,direction,nose_active});
+  if(!startTime) startTime=Date.now();
+  lastEventTime=Date.now();
+  if(direction==="EXHALE") totalExhales++;
+  else                      totalInhales++;
+  updateStats();
+  addLog(time_sec,duration_sec,direction);
+}
+
+function updateStats() {
+  const breaths=Math.min(totalExhales,totalInhales);
+  document.getElementById("statBreaths").textContent=breaths;
+  if(!startTime) return;
+  const elapsedMs=Date.now()-startTime;
+  document.getElementById("statDuration").textContent=Math.floor(elapsedMs/60000);
+  const curMouthMs=mouthStart?(Date.now()-mouthStart):0;
+  const noseMin=(elapsedMs-totalMouthMs-curMouthMs)/60000;
+  document.getElementById("statNoseMin").textContent=Math.floor(noseMin);
+  if(noseMin>0.17&&breaths>0)
+    document.getElementById("statBPM").textContent=(breaths/noseMin).toFixed(1);
+}
+
+function addLog(time,dur,dir) {
+  const area=document.getElementById("logArea");
+  const d=document.createElement("div");
+  const t=nowTimeStr();
+  if      (dir==="EXHALE")     {d.className="log-exhale";d.textContent=`${t}  EXHALE  ${dur}s`;}
+  else if (dir==="INHALE")     {d.className="log-inhale";d.textContent=`${t}  INHALE  ${dur}s`;}
+  else if (dir==="MOUTH_START"){d.className="log-mouth"; d.textContent=`⚠️ ${t} — נשימת פה התחילה`;}
+  else if (dir==="MOUTH_END")  {d.className="log-mouth"; d.textContent=`✓ ${t} — חזר לאף (${secToMMSS(dur)})`;}
+  else if (dir==="SNORE_START"){d.className="log-snore"; d.textContent=`😤 ${t} — נחירות התחילו`;}
+  else if (dir==="SNORE_END")  {d.className="log-snore"; d.textContent=`✓ ${t} — נחירות הסתיימו (${secToMMSS(dur)})`;}
+  area.appendChild(d);
+  area.scrollTop=area.scrollHeight;
+}
+
+// =============================================================
+// שמירה
+// =============================================================
+function saveCSV() {
+  let csv="time_sec,duration_sec,direction,nose_active\n";
+  logRows.forEach(r=>csv+=`${r.time_sec},${r.duration_sec},${r.direction},${r.nose_active}\n`);
+  const breaths=Math.min(totalExhales,totalInhales);
+  const elapsedMin=startTime?(Date.now()-startTime)/60000:0;
+  const curMouthMs=mouthStart?(Date.now()-mouthStart):0;
+  const noseMin=startTime?(Date.now()-startTime-totalMouthMs-curMouthMs)/60000:0;
+  const mouthTot=mouthEvents.reduce((s,e)=>s+e.duration_sec,0);
+  const snoreTot=snoreEvents.reduce((s,e)=>s+e.duration_sec,0);
+  csv+=`\n# SUMMARY\n`;
+  csv+=`# Total breaths (nose): ${breaths}\n`;
+  csv+=`# Duration total (min): ${elapsedMin.toFixed(1)}\n`;
+  csv+=`# Duration nose (min): ${noseMin.toFixed(1)}\n`;
+  csv+=`# Avg breaths/min (nose): ${noseMin>0?(breaths/noseMin).toFixed(1):"—"}\n`;
+  csv+=`# Mouth events: ${mouthEvents.length}\n`;
+  csv+=`# Mouth total (sec): ${mouthTot}\n`;
+  csv+=`# Snore events: ${snoreEvents.length}\n`;
+  csv+=`# Snore total (sec): ${snoreTot}\n`;
+  if(mouthEvents.length>0){
+    csv+=`\n# MOUTH EVENTS\n# event,clock,start_sec,duration\n`;
+    mouthEvents.forEach((e,i)=>csv+=`# ${i+1},${e.clock},${e.start_sec},${secToMMSS(e.duration_sec)}\n`);
+  }
+  if(snoreEvents.length>0){
+    csv+=`\n# SNORE EVENTS\n# event,clock,start_sec,duration\n`;
+    snoreEvents.forEach((e,i)=>csv+=`# ${i+1},${e.clock},${e.start_sec},${secToMMSS(e.duration_sec)}\n`);
+  }
+  const blob=new Blob([csv],{type:"text/csv"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url; a.download=`sleep_log_${new Date().toISOString().slice(0,10)}.csv`; a.click();
+}
+
+// =============================================================
+// ניקוי
+// =============================================================
+function clearLog() {
+  if(!confirm("למחוק את כל הנתונים?")) return;
+  logRows=[];totalExhales=0;totalInhales=0;totalMouthMs=0;
+  mouthEvents=[];mouthStart=null;mouthStartClock=null;
+  snoreEvents=[];snoreStart=null;snoreStartClock=null;
+  startTime=null;lastEventTime=null;
+  document.getElementById("logArea").innerHTML="";
+  document.getElementById("mouthList").innerHTML='<span style="color:#8b949e">לא זוהתה נשימת פה</span>';
+  document.getElementById("snoreList").innerHTML='<span style="color:#8b949e">לא זוהו נחירות</span>';
+  document.getElementById("mouthCard").className="mouth-card";
+  document.getElementById("snoreCard").className="snore-card";
+  ["statBreaths","statDuration","statNoseMin","mouthCount","snoreCount"].forEach(id=>document.getElementById(id).textContent="0");
+  document.getElementById("mouthTotalSec").textContent="0:00";
+  document.getElementById("snoreTotalSec").textContent="0:00";
+  document.getElementById("statBPM").textContent="—";
+  ctx2d.clearRect(0,0,canvas.width,canvas.height);
+}
+
+function setStatus(state,text) {
+  document.getElementById("dot").className="dot "+state;
+  document.getElementById("statusText").textContent=text;
+}
+</script>
+</body>
+</html>
